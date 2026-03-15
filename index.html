@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>流量模擬器 · f606</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&family=Syne:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --surface2: #181c24;
+    --border: #252a35;
+    --accent: #4fffb0;
+    --accent2: #ff6b6b;
+    --accent3: #ffd166;
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --local-cost: #4fffb0;
+    --remote-cost: #ff9f43;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans TC', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0.4;
+  }
+
+  /* Grid background */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: 
+      linear-gradient(rgba(79,255,176,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(79,255,176,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 24px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Header */
+  header {
+    padding: 48px 0 32px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+  }
+
+  .header-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header-tag::before {
+    content: '';
+    display: inline-block;
+    width: 20px;
+    height: 1px;
+    background: var(--accent);
+  }
+
+  h1 {
+    font-family: 'Syne', sans-serif;
+    font-size: clamp(28px, 5vw, 52px);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -1px;
+  }
+
+  h1 span {
+    color: var(--accent);
+  }
+
+  .subtitle {
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.6;
+    max-width: 600px;
+  }
+
+  /* Cost rules card */
+  .rules-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+
+  .rule-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .rule-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .rule-card.local::before { background: var(--local-cost); }
+  .rule-card.remote::before { background: var(--remote-cost); }
+
+  .rule-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .rule-card.local .rule-label { color: var(--local-cost); }
+  .rule-card.remote .rule-label { color: var(--remote-cost); }
+
+  .rule-title {
+    font-size: 15px;
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+
+  .rule-desc {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .rule-formula {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-top: 10px;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  /* Input section */
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .section-title .num {
+    width: 28px; height: 28px;
+    background: var(--accent);
+    color: var(--bg);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    flex-shrink: 0;
+  }
+
+  .params-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+  }
+
+  .param-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  label {
+    font-size: 12px;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 1px;
+  }
+
+  input[type=number] {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    padding: 10px 16px;
+    width: 80px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input[type=number]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(79,255,176,0.1);
+  }
+
+  /* Matrix table */
+  .matrix-section {
+    margin-bottom: 28px;
+  }
+
+  .matrix-scroll {
+    overflow-x: auto;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: fit-content;
+  }
+
+  th {
+    background: var(--surface2);
+    padding: 10px 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    font-weight: 400;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th.row-header {
+    color: var(--accent);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+  }
+
+  td {
+    padding: 6px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+
+  td input {
+    width: 70px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    padding: 6px 10px;
+    text-align: center;
+    outline: none;
+    transition: all 0.15s;
+  }
+
+  td input:hover {
+    border-color: var(--border);
+    background: var(--surface2);
+  }
+
+  td input:focus {
+    border-color: var(--accent);
+    background: var(--surface2);
+    box-shadow: 0 0 0 2px rgba(79,255,176,0.1);
+  }
+
+  td.row-label {
+    background: var(--surface);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--accent);
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+    padding: 6px 14px;
+  }
+
+  /* Plans */
+  .plans-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .plan-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    transition: all 0.2s;
+  }
+
+  .plan-row.best {
+    border-color: var(--accent);
+    background: rgba(79,255,176,0.05);
+  }
+
+  .plan-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    min-width: 60px;
+  }
+
+  .plan-inputs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    flex: 1;
+  }
+
+  .plan-inputs input {
+    width: 60px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    padding: 6px 8px;
+    text-align: center;
+    outline: none;
+    transition: all 0.15s;
+  }
+
+  .plan-inputs input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(79,255,176,0.1);
+  }
+
+  .plan-cost {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    min-width: 80px;
+    text-align: right;
+    color: var(--muted);
+  }
+
+  .plan-cost.computed {
+    color: var(--text);
+  }
+
+  .plan-cost.best-cost {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .best-badge {
+    font-size: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 1px;
+    background: var(--accent);
+    color: var(--bg);
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 700;
+  }
+
+  /* Buttons */
+  .btn-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 32px;
+  }
+
+  .btn {
+    font-family: 'Noto Sans TC', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 12px 24px;
+    border-radius: 10px;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--bg);
+  }
+
+  .btn-primary:hover {
+    background: #6fffbf;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(79,255,176,0.3);
+  }
+
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+
+  .btn-ghost:hover {
+    color: var(--text);
+    border-color: var(--muted);
+  }
+
+  /* Result box */
+  .result-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 32px;
+    display: none;
+    animation: fadeSlideIn 0.4s ease;
+  }
+
+  .result-box.visible {
+    display: block;
+  }
+
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .result-box h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 16px;
+    margin-bottom: 20px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  .result-answer {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(40px, 8vw, 80px);
+    font-weight: 600;
+    color: var(--accent);
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+
+  .result-sub {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 24px;
+  }
+
+  /* Flow breakdown */
+  .breakdown-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  .flow-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    transition: all 0.2s;
+  }
+
+  .flow-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+
+  .flow-route {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .flow-route .city {
+    background: var(--surface2);
+    padding: 2px 8px;
+    border-radius: 4px;
+    color: var(--accent);
+  }
+
+  .flow-amount {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .flow-cost-tag {
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .flow-card.same-city {
+    border-left: 3px solid var(--local-cost);
+  }
+
+  .flow-card.diff-city {
+    border-left: 3px solid var(--remote-cost);
+  }
+
+  .flow-card.same-city .flow-amount { color: var(--local-cost); }
+  .flow-card.diff-city .flow-amount { color: var(--remote-cost); }
+
+  /* Cost bar */
+  .cost-bar {
+    height: 8px;
+    background: var(--surface2);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+
+  .cost-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.8s cubic-bezier(0.4,0,0.2,1);
+  }
+
+  /* Example buttons */
+  .examples-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+
+  .example-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    transition: all 0.2s;
+    letter-spacing: 0.5px;
+  }
+
+  .example-btn:hover {
+    border-color: var(--accent3);
+    color: var(--accent3);
+  }
+
+  /* Divider */
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 36px 0;
+  }
+
+  /* Responsive */
+  @media (max-width: 600px) {
+    .rules-grid { grid-template-columns: 1fr; }
+    .params-row { gap: 12px; }
+    input[type=number] { width: 70px; }
+  }
+
+  .error-msg {
+    color: var(--accent2);
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 10px 14px;
+    background: rgba(255,107,107,0.1);
+    border: 1px solid rgba(255,107,107,0.3);
+    border-radius: 8px;
+    margin-top: 12px;
+    display: none;
+  }
+
+  .error-msg.visible { display: block; }
+
+  .plan-breakdown-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin: 20px 0 10px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="header-tag">APCS · f606 · 2021/01</div>
+    <h1>流量<span>模擬器</span></h1>
+    <p class="subtitle">
+      互動式模擬：為每個伺服器選擇放置城市，計算所有方案的傳輸費用，找出最小花費。
+    </p>
+  </header>
+
+  <!-- Cost Rules -->
+  <div class="rules-grid">
+    <div class="rule-card local">
+      <div class="rule-label">同城市</div>
+      <div class="rule-title">u = v</div>
+      <div class="rule-desc">同城市內傳輸，每單位流量費用較低。</div>
+      <div class="rule-formula">cost = f × 1</div>
+    </div>
+    <div class="rule-card remote">
+      <div class="rule-label">跨城市</div>
+      <div class="rule-title">u ≠ v</div>
+      <div class="rule-desc">先將同起終點流量加總，再分段計費。</div>
+      <div class="rule-formula">cost = min(f,1000)×3 + max(f-1000,0)×2</div>
+    </div>
+  </div>
+
+  <!-- Load Examples -->
+  <div style="margin-bottom: 6px; font-size: 13px; color: var(--muted);">快速載入範例：</div>
+  <div class="examples-row">
+    <button class="example-btn" onclick="loadExample(1)">▶ 範例 #1 (預期輸出: 217)</button>
+    <button class="example-btn" onclick="loadExample(2)">▶ 範例 #2 (預期輸出: 13470)</button>
+  </div>
+
+  <hr class="divider">
+
+  <!-- Step 1: Parameters -->
+  <div class="section-title"><span class="num">1</span> 設定參數</div>
+  <div class="params-row">
+    <div class="param-group">
+      <label>N (伺服器數)</label>
+      <input type="number" id="inp-n" value="2" min="1" max="50" onchange="rebuild()">
+    </div>
+    <div class="param-group">
+      <label>M (城市數)</label>
+      <input type="number" id="inp-m" value="3" min="1" max="50" onchange="rebuild()">
+    </div>
+    <div class="param-group">
+      <label>K (方案數)</label>
+      <input type="number" id="inp-k" value="3" min="1" max="50" onchange="rebuild()">
+    </div>
+  </div>
+
+  <!-- Step 2: Q matrix -->
+  <div class="section-title"><span class="num">2</span> 流量矩陣 Q[i][j]</div>
+  <div class="matrix-section">
+    <div class="matrix-scroll">
+      <table id="q-table"></table>
+    </div>
+  </div>
+
+  <!-- Step 3: Plans -->
+  <div class="section-title"><span class="num">3</span> 方案列表 c[k]</div>
+  <div class="plans-container" id="plans-container"></div>
+
+  <div id="error-msg" class="error-msg"></div>
+
+  <!-- Actions -->
+  <div class="btn-row">
+    <button class="btn btn-primary" onclick="compute()">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-width="2" d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      計算最小費用
+    </button>
+    <button class="btn btn-secondary" onclick="computeAll()">全部計算</button>
+    <button class="btn btn-ghost" onclick="resetAll()">重置</button>
+  </div>
+
+  <!-- Result -->
+  <div class="result-box" id="result-box">
+    <h2>最小花費</h2>
+    <div class="result-answer" id="result-answer">—</div>
+    <div class="result-sub" id="result-sub"></div>
+
+    <div class="plan-breakdown-title">最佳方案流量拆解</div>
+    <div class="breakdown-grid" id="breakdown-grid"></div>
+  </div>
+
+</div>
+
+<script>
+let N=2, M=3, K=3;
+const QData = [];
+const PlansData = [];
+
+function getQ() {
+  const q = [];
+  for (let i=0;i<N;i++){
+    q.push([]);
+    for (let j=0;j<M;j++){
+      const v = parseInt(document.getElementById(`q-${i}-${j}`)?.value||'0')||0;
+      q[i].push(v);
+    }
+  }
+  return q;
+}
+
+function getPlan(k) {
+  const p = [];
+  for (let i=0;i<N;i++){
+    const v = parseInt(document.getElementById(`p-${k}-${i}`)?.value||'0')||0;
+    p.push(v);
+  }
+  return p;
+}
+
+function costFunction(flow, sameCity) {
+  if (sameCity) return flow * 1;
+  if (flow <= 1000) return flow * 3;
+  return 1000 * 3 + (flow - 1000) * 2;
+}
+
+function calcPlanCost(q, plan) {
+  // Aggregate flow from city u to city v
+  const agg = {};
+  for (let i=0;i<N;i++){
+    const serverCity = plan[i];
+    for (let j=0;j<M;j++){
+      const destCity = j; // city j is destination city j
+      const key = `${serverCity}-${destCity}`;
+      agg[key] = (agg[key]||0) + q[i][j];
+    }
+  }
+  let total = 0;
+  const details = [];
+  for (const [key, flow] of Object.entries(agg)){
+    if (flow === 0) continue;
+    const [u, v] = key.split('-').map(Number);
+    const same = u === v;
+    const c = costFunction(flow, same);
+    total += c;
+    details.push({u, v, flow, cost:c, same});
+  }
+  return {total, details};
+}
+
+function buildMatrix() {
+  const t = document.getElementById('q-table');
+  let html = '<thead><tr><th class="row-header">伺服器 \\ 城市</th>';
+  for (let j=0;j<M;j++) html += `<th>城市 ${j}</th>`;
+  html += '</tr></thead><tbody>';
+  for (let i=0;i<N;i++){
+    html += `<tr><td class="row-label">伺服器 ${i}</td>`;
+    for (let j=0;j<M;j++){
+      const prev = QData[i] && QData[i][j] !== undefined ? QData[i][j] : '';
+      html += `<td><input type="number" id="q-${i}-${j}" value="${prev}" min="0" placeholder="0"></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody>';
+  t.innerHTML = html;
+}
+
+function buildPlans() {
+  const c = document.getElementById('plans-container');
+  let html = '';
+  for (let k=0;k<K;k++){
+    html += `<div class="plan-row" id="plan-row-${k}">
+      <span class="plan-num">方案 #${k+1}</span>
+      <div class="plan-inputs">`;
+    for (let i=0;i<N;i++){
+      const prev = PlansData[k] && PlansData[k][i] !== undefined ? PlansData[k][i] : '';
+      html += `<input type="number" id="p-${k}-${i}" value="${prev}" min="0" max="${M-1}" placeholder="城市${i}">`;
+    }
+    html += `</div>
+      <span class="plan-cost" id="cost-${k}">—</span>
+      <span id="badge-${k}"></span>
+    </div>`;
+  }
+  c.innerHTML = html;
+}
+
+function rebuild() {
+  N = parseInt(document.getElementById('inp-n').value)||2;
+  M = parseInt(document.getElementById('inp-m').value)||3;
+  K = parseInt(document.getElementById('inp-k').value)||3;
+  N = Math.min(50, Math.max(1, N));
+  M = Math.min(50, Math.max(1, M));
+  K = Math.min(50, Math.max(1, K));
+  buildMatrix();
+  buildPlans();
+  document.getElementById('result-box').classList.remove('visible');
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+
+function clearError() {
+  document.getElementById('error-msg').classList.remove('visible');
+}
+
+function validatePlan(plan) {
+  for (let i=0;i<N;i++){
+    if (plan[i] < 0 || plan[i] >= M) return false;
+  }
+  return true;
+}
+
+function computeAll() {
+  clearError();
+  const q = getQ();
+  let minCost = Infinity, minK = -1;
+  const results = [];
+
+  for (let k=0;k<K;k++){
+    const plan = getPlan(k);
+    if (!validatePlan(plan)){
+      results.push(null);
+      continue;
+    }
+    const {total, details} = calcPlanCost(q, plan);
+    results.push({total, details, plan});
+
+    const el = document.getElementById(`cost-${k}`);
+    el.textContent = total.toLocaleString() + ' 元';
+    el.className = 'plan-cost computed';
+
+    if (total < minCost){ minCost = total; minK = k; }
+  }
+
+  if (minK === -1){ showError('請確保所有方案的城市編號在 0 到 M-1 之間。'); return; }
+
+  // Mark best
+  for (let k=0;k<K;k++){
+    const row = document.getElementById(`plan-row-${k}`);
+    const badge = document.getElementById(`badge-${k}`);
+    const costEl = document.getElementById(`cost-${k}`);
+    if (k === minK){
+      row.classList.add('best');
+      costEl.classList.add('best-cost');
+      badge.innerHTML = '<span class="best-badge">BEST</span>';
+    } else {
+      row.classList.remove('best');
+      costEl.classList.remove('best-cost');
+      badge.innerHTML = '';
+    }
+  }
+
+  showResult(minCost, minK, results[minK]);
+}
+
+function compute() {
+  computeAll();
+}
+
+function showResult(minCost, minK, data) {
+  document.getElementById('result-answer').textContent = minCost.toLocaleString();
+  document.getElementById('result-sub').textContent = `最佳方案：方案 #${minK+1} | 伺服器配置：[ ${data.plan.join(', ')} ]`;
+
+  const grid = document.getElementById('breakdown-grid');
+  let html = '';
+  const sorted = [...data.details].sort((a,b)=>b.cost-a.cost);
+  const maxCost = sorted[0]?.cost||1;
+
+  for (const d of sorted){
+    const pct = Math.round(d.cost/maxCost*100);
+    const cls = d.same ? 'same-city' : 'diff-city';
+    const typeLabel = d.same ? '同城市 ×1' : (d.flow>1000 ? '跨城市 分段計費' : '跨城市 ×3');
+    html += `<div class="flow-card ${cls}">
+      <div class="flow-route">
+        <span class="city">城市${d.u}</span>
+        <span>→</span>
+        <span class="city">城市${d.v}</span>
+      </div>
+      <div class="flow-amount">${d.flow.toLocaleString()}</div>
+      <div class="flow-cost-tag">${typeLabel} = ${d.cost.toLocaleString()} 元</div>
+      <div class="cost-bar"><div class="cost-bar-fill" style="width:${pct}%;background:${d.same ? 'var(--local-cost)' : 'var(--remote-cost)'}"></div></div>
+    </div>`;
+  }
+
+  grid.innerHTML = html || '<span style="color:var(--muted);font-size:13px">無流量</span>';
+  document.getElementById('result-box').classList.add('visible');
+  document.getElementById('result-box').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function resetAll() {
+  QData.length = 0; PlansData.length = 0;
+  document.getElementById('inp-n').value = 2;
+  document.getElementById('inp-m').value = 3;
+  document.getElementById('inp-k').value = 3;
+  N=2; M=3; K=3;
+  buildMatrix(); buildPlans();
+  document.getElementById('result-box').classList.remove('visible');
+  clearError();
+}
+
+function loadExample(n) {
+  clearError();
+  document.getElementById('result-box').classList.remove('visible');
+  if (n === 1){
+    document.getElementById('inp-n').value = 2;
+    document.getElementById('inp-m').value = 3;
+    document.getElementById('inp-k').value = 3;
+    N=2; M=3; K=3;
+    buildMatrix(); buildPlans();
+    const q = [[30,23,23],[5,25,3]];
+    const plans = [[0,0],[0,1],[0,2]];
+    setQValues(q); setPlanValues(plans);
+  } else {
+    document.getElementById('inp-n').value = 3;
+    document.getElementById('inp-m').value = 4;
+    document.getElementById('inp-k').value = 5;
+    N=3; M=4; K=5;
+    buildMatrix(); buildPlans();
+    const q = [[500,400,800,200],[500,400,100,600],[450,420,800,790]];
+    const plans = [[0,0,0],[0,1,2],[0,2,2],[2,1,2],[1,1,1]];
+    setQValues(q); setPlanValues(plans);
+  }
+}
+
+function setQValues(q) {
+  for (let i=0;i<q.length;i++)
+    for (let j=0;j<q[i].length;j++){
+      const el = document.getElementById(`q-${i}-${j}`);
+      if (el) el.value = q[i][j];
+    }
+}
+
+function setPlanValues(plans) {
+  for (let k=0;k<plans.length;k++)
+    for (let i=0;i<plans[k].length;i++){
+      const el = document.getElementById(`p-${k}-${i}`);
+      if (el) el.value = plans[k][i];
+    }
+}
+
+// Init
+rebuild();
+</script>
+</body>
+</html>
